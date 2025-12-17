@@ -348,7 +348,7 @@ public:
         cout << "Loaded graph with " << vertices << " vertices and " << edge_count/2 << " edges" << endl;
     }
     
-    void FindClique(int iterations, int randomization)
+    void FindClique(int iterations, int randomization=3)
     {
         best_clique.clear();
         adj_matrix.clear();
@@ -419,7 +419,7 @@ int main()
     // int iterations;
     // cout << "Number of iterations: ";
     // cin >> iterations;
-    int randomization = 3;
+    // int randomization = 3;
     // cout << "Randomization level (1=deterministic, >1=randomized): ";
     // cin >> randomization;
     
@@ -430,13 +430,15 @@ int main()
         "sanr200_0.9.clq" };
     vector<int> iterations = {700000, 1, 1, 1000, 500000,
          900000, 20000, 20000, 100000, 1000000, 1000000, 1000000,
-         500000, 200000, 5000000, 2000000, 2000000, 2000000,
+         500000, 200000, 5000000, 2000000, 3000000, 3000000,
+         100000, 4000000, 13000000, 4000000, 13000000, 2000000, 13000000,
+         1000000
          };
     
     ofstream fout("clique.csv");
     fout << "File; Clique; Time (sec)\n";
     
-    int count = 16;
+    int count = 25;
     string file = files[count];
     // for (string file : files)
     // {
@@ -448,7 +450,7 @@ int main()
         problem.ReadGraphFile(full_path);
         
         clock_t start = clock();
-        problem.FindClique(iterations[count], randomization);
+        problem.FindClique(iterations[count]);
         
         bool is_valid = problem.Check();
         
