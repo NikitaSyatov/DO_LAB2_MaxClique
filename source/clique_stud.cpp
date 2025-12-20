@@ -33,8 +33,8 @@ private:
         }
     }
     
-    // Простой жадный алгоритм (используется как базовая эвристика)
-    vector<int> simpleGreedyClique() {
+    // GRASP: Жадный рандомизированный адаптивный поиск для построения начальной клики
+    vector<int> graspConstruct(double alpha = 0.5) {
         vector<int> clique;
         vector<bool> used(n, false);
         
@@ -52,93 +52,59 @@ private:
         clique.push_back(start_vertex);
         used[start_vertex] = true;
         
-        // Пытаемся добавить другие вершины
-        for (int i = 0; i < n; i++) {
-            if (used[i]) continue;
+        // Адаптивный процесс построения
+        while (true) {
+            // Список кандидатов с их оценками
+            vector<pair<int, int>> candidate_scores;
             
-            bool can_add = true;
-            for (int v : clique) {
-                if (!adj_matrix[i][v]) {
-                    can_add = false;
-                    break;
+            // Оцениваем всех кандидатов
+            for (int i = 0; i < n; i++) {
+                if (used[i]) continue;
+                
+                // Считаем, сколько вершин в текущей клике соединено с i
+                int connections = 0;
+                for (int v : clique) {
+                    if (adj_matrix[i][v]) connections++;
+                }
+                
+                // Можем добавить только если соединена со всеми
+                if (connections == clique.size()) {
+                    candidate_scores.emplace_back(neighbour_sets[i].size(), i);
                 }
             }
             
-            if (can_add) {
-                clique.push_back(i);
-                used[i] = true;
-            }
+            if (candidate_scores.empty()) break;
+            
+            // Сортируем по убыванию оценки
+            sort(candidate_scores.rbegin(), candidate_scores.rend());
+            
+            // Строим RCL (Restricted Candidate List): берём лучшие alpha*100% кандидатов
+            int rcl_size = max(1, (int)(candidate_scores.size() * alpha));
+            
+            // Случайный выбор из RCL
+            static mt19937 rng(time(0));
+            uniform_int_distribution<int> dist(0, rcl_size - 1);
+            int selected_idx = dist(rng);
+            int selected_vertex = candidate_scores[selected_idx].second;
+            
+            clique.push_back(selected_vertex);
+            used[selected_vertex] = true;
         }
         
         return clique;
     }
     
-    // Основной алгоритм: рандомизированный жадный с использованием iterations и randomization
-    void randomizedGreedySearch(int iterations, int randomization) {
-        if (n == 0) return;
-        
-        buildAdjMatrix(); // строим матрицу один раз
-        
-        mt19937 rng(static_cast<unsigned int>(time(0)));
-        
-        for (int iter = 0; iter < iterations; ++iter) {
-            vector<int> clique;
-            vector<int> candidates(n);
-            for (int i = 0; i < n; i++) candidates[i] = i;
-            
-            // Случайное перемешивание вершин
-            shuffle(candidates.begin(), candidates.end(), rng);
-            
-            // Основной цикл построения клики
-            while (!candidates.empty()) {
-                int last = candidates.size() - 1;
-                
-                // Выбираем случайную вершину из первых randomization кандидатов
-                int rnd = 0;
-                if (randomization > 1) {
-                    uniform_int_distribution<int> dist(0, min(randomization - 1, last));
-                    rnd = dist(rng);
-                }
-                
-                int vertex = candidates[rnd];
-                clique.push_back(vertex);
-                
-                // Фильтруем кандидатов: оставляем только тех, кто соединен с выбранной вершиной
-                vector<int> new_candidates;
-                for (int candidate : candidates) {
-                    if (candidate == vertex) continue;
-                    if (adj_matrix[vertex][candidate]) {
-                        new_candidates.push_back(candidate);
-                    }
-                }
-                
-                candidates = new_candidates;
-                
-                // Перемешиваем оставшихся кандидатов для следующей итерации
-                if (!candidates.empty() && randomization > 1) {
-                    shuffle(candidates.begin(), candidates.end(), rng);
-                }
-            }
-            
-            // Улучшаем найденную клику: пытаемся добавить пропущенные вершины
-            improveClique(clique);
-            
-            // Обновляем лучший результат
-            if (clique.size() > best_clique.size()) {
-                best_clique = clique;
-            }
-        }
-    }
-    
-    // Улучшение клики: пытаемся добавить все возможные вершины
-    void improveClique(vector<int>& clique) {
+    // Локальный поиск для улучшения клики
+    void localSearch(vector<int>& clique) {
         vector<bool> in_clique(n, false);
         for (int v : clique) in_clique[v] = true;
         
         bool improved = true;
+        
         while (improved) {
             improved = false;
             
+            // Фаза добавления: пытаемся добавить все возможные вершины
             for (int v = 0; v < n; v++) {
                 if (in_clique[v]) continue;
                 
@@ -156,145 +122,76 @@ private:
                     improved = true;
                 }
             }
+            
+            // Фаза замены: пробуем заменить 1-2 вершины для улучшения
+            if (!improved && clique.size() >= 4) {
+                // Пробуем заменить 1 вершину на 2
+                for (int i = 0; i < clique.size() && !improved; i++) {
+                    int v_to_remove = clique[i];
+                    
+                    // Ищем две вершины, которые можно добавить вместо v_to_remove
+                    for (int x = 0; x < n && !improved; x++) {
+                        if (in_clique[x] || x == v_to_remove) continue;
+                        for (int y = x + 1; y < n && !improved; y++) {
+                            if (in_clique[y] || y == v_to_remove) continue;
+                            
+                            // Проверяем, можно ли добавить x и y
+                            bool valid = true;
+                            for (int u : clique) {
+                                if (u != v_to_remove) {
+                                    if (!adj_matrix[x][u] || !adj_matrix[y][u]) {
+                                        valid = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (valid && adj_matrix[x][y]) {
+                                // Делаем замену
+                                clique.erase(clique.begin() + i);
+                                clique.push_back(x);
+                                clique.push_back(y);
+                                
+                                in_clique[v_to_remove] = false;
+                                in_clique[x] = true;
+                                in_clique[y] = true;
+                                
+                                improved = true;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     
-    // Метод ветвей и границ с использованием параметров
-    void branchAndBoundSearch(int max_nodes, int randomization) {
-        if (n == 0) return;
-        
-        buildAdjMatrix();
-        
-        // Начальное решение через жадный алгоритм
-        best_clique = simpleGreedyClique();
-        
-        // Структура для узла поиска
-        struct Node {
-            vector<int> clique;
-            vector<int> candidates;
-            int bound; // верхняя оценка
-            
-            Node(vector<int> c, vector<int> cand) : clique(c), candidates(cand) {
-                bound = clique.size() + candidates.size();
-            }
-        };
-        
-        // Создаем начальные кандидаты (все вершины)
-        vector<int> all_vertices(n);
-        for (int i = 0; i < n; i++) all_vertices[i] = i;
-        
-        // Сортируем по убыванию степени
-        sort(all_vertices.begin(), all_vertices.end(), [&](int a, int b) {
-            return neighbour_sets[a].size() > neighbour_sets[b].size();
-        });
-        
-        stack<Node> stk;
-        stk.push(Node({}, all_vertices));
-        
-        int nodes_processed = 0;
+    // Итеративный GRASP: многократный запуск GRASP с локальным поиском
+    void iterativeGRASP(int iterations, int randomization) {
         mt19937 rng(static_cast<unsigned int>(time(0)));
         
-        while (!stk.empty() && nodes_processed < max_nodes) {
-            Node node = stk.top();
-            stk.pop();
-            nodes_processed++;
+        for (int iter = 0; iter < iterations; ++iter) {
+            // Выбираем случайный alpha в диапазоне [0.3, 0.7] для разнообразия
+            double alpha = 0.3 + (rng() % 5) * 0.1;
             
-            // Отсечение по оценке
-            if (node.bound <= (int)best_clique.size()) {
-                continue;
+            // Построение начальной клики с помощью GRASP
+            vector<int> clique = graspConstruct(alpha);
+            
+            // Локальное улучшение
+            localSearch(clique);
+            
+            // Обновляем лучший результат
+            if (clique.size() > best_clique.size()) {
+                best_clique = clique;
+                cout << "Iteration " << iter + 1 << ": found clique of size " << clique.size() << endl;
             }
             
-            if (node.candidates.empty()) {
-                if (node.clique.size() > best_clique.size()) {
-                    best_clique = node.clique;
-                }
-                continue;
-            }
-            
-            // Выбор вершины для ветвления с использованием randomization
-            int selected_idx = 0;
-            if (randomization > 1 && node.candidates.size() > 1) {
-                int k = min(randomization, (int)node.candidates.size());
-                uniform_int_distribution<int> dist(0, k - 1);
-                selected_idx = dist(rng);
-            }
-            
-            int selected_vertex = node.candidates[selected_idx];
-            
-            // Ветвь 1: включаем вершину в клику
-            vector<int> new_clique = node.clique;
-            new_clique.push_back(selected_vertex);
-            
-            // Формируем новых кандидатов
-            vector<int> new_candidates;
-            for (int v : node.candidates) {
-                if (v == selected_vertex) continue;
-                
-                bool compatible = true;
-                for (int u : new_clique) {
-                    if (!adj_matrix[v][u]) {
-                        compatible = false;
-                        break;
-                    }
-                }
-                
-                if (compatible) {
-                    new_candidates.push_back(v);
+            // Иногда делаем более интенсивный локальный поиск для лучших решений
+            if (clique.size() >= best_clique.size() * 0.9) {
+                vector<int> intensified_clique = clique;
+                localSearch(intensified_clique);
+                if (intensified_clique.size() > best_clique.size()) {
+                    best_clique = intensified_clique;
                 }
             }
-            
-            Node with_node(new_clique, new_candidates);
-            if (with_node.bound > (int)best_clique.size()) {
-                if (new_candidates.empty()) {
-                    if (new_clique.size() > best_clique.size()) {
-                        best_clique = new_clique;
-                    }
-                } else {
-                    stk.push(with_node);
-                }
-            }
-            
-            // Ветвь 2: исключаем вершину из клики
-            vector<int> candidates_without;
-            for (int v : node.candidates) {
-                if (v != selected_vertex) {
-                    candidates_without.push_back(v);
-                }
-            }
-            
-            Node without_node(node.clique, candidates_without);
-            if (without_node.bound > (int)best_clique.size() && !candidates_without.empty()) {
-                stk.push(without_node);
-            }
-        }
-    }
-    
-    // Адаптивный выбор алгоритма в зависимости от размера графа
-    void adaptiveSearch(int iterations, int randomization, double time_limit = 9.5) {
-        clock_t start = clock();
-        
-        // Для очень маленьких графов (< 50 вершин) используем полный поиск
-        if (n < 50) {
-            branchAndBoundSearch(iterations * 100, randomization);
-        }
-        // Для средних графов (50-200 вершин) комбинируем оба подхода
-        else if (n < 200) {
-            // Первая половина итераций - рандомизированный жадный
-            randomizedGreedySearch(iterations / 2, randomization);
-            
-            // Вторая половина - ветви и границы, если осталось время
-            if ((double)(clock() - start) / CLOCKS_PER_SEC < time_limit / 2) {
-                branchAndBoundSearch(iterations * 50, randomization);
-            }
-        }
-        // Для больших графов (> 200 вершин) только рандомизированный жадный
-        else {
-            randomizedGreedySearch(iterations, randomization);
-        }
-        
-        // Финальное улучшение
-        if (!best_clique.empty()) {
-            improveClique(best_clique);
         }
     }
 
@@ -346,12 +243,14 @@ public:
             edge_count += s.size();
         }
         cout << "Loaded graph with " << vertices << " vertices and " << edge_count/2 << " edges" << endl;
+        
+        // Строим матрицу смежности
+        buildAdjMatrix();
     }
     
-    void FindClique(int iterations, int randomization=3)
+    void FindClique(int iterations, int randomization)
     {
         best_clique.clear();
-        adj_matrix.clear();
         
         if (neighbour_sets.empty()) {
             cout << "Error: Graph is empty!" << endl;
@@ -360,12 +259,17 @@ public:
         
         n = neighbour_sets.size();
         cout << "Searching for max clique in graph with " << n << " vertices" << endl;
-        cout << "Using " << iterations << " iterations, randomization = " << randomization << endl;
+        cout << "Using Iterative GRASP with " << iterations << " iterations" << endl;
         
         clock_t start = clock();
         
-        // Адаптивный выбор алгоритма
-        adaptiveSearch(iterations, randomization, 9.5);
+        // Запускаем итеративный GRASP
+        iterativeGRASP(iterations, randomization);
+        
+        // Финальное улучшение лучшей найденной клики
+        if (!best_clique.empty()) {
+            localSearch(best_clique);
+        }
         
         double elapsed = double(clock() - start) / CLOCKS_PER_SEC;
         cout << "Time: " << elapsed << " seconds, clique size: " << best_clique.size() << endl;
@@ -403,7 +307,7 @@ public:
             for (size_t j = i + 1; j < best_clique.size(); j++) {
                 int v1 = best_clique[i];
                 int v2 = best_clique[j];
-                if (neighbour_sets[v1].find(v2) == neighbour_sets[v1].end()) {
+                if (!adj_matrix[v1][v2]) {
                     cout << "Missing edge between " << v1 << " and " << v2 << endl;
                     return false;
                 }
@@ -416,20 +320,13 @@ public:
 
 int main()
 {
-    // int iterations;
-    // cout << "Number of iterations: ";
-    // cin >> iterations;
-    // int randomization = 3;
-    // cout << "Randomization level (1=deterministic, >1=randomized): ";
-    // cin >> randomization;
-    
     vector<string> files = { "C125.9.clq", "johnson8-2-4.clq", "johnson16-2-4.clq", "MANN_a9.clq", "MANN_a27.clq",
         "p_hat1000-1.clq", "keller4.clq", "hamming8-4.clq", "brock200_1.clq", "brock200_2.clq", "brock200_3.clq", "brock200_4.clq",
         "gen200_p0.9_44.clq", "gen200_p0.9_55.clq", "brock400_1.clq", "brock400_2.clq", "brock400_3.clq", "brock400_4.clq",
         "MANN_a45.clq", "sanr400_0.7.clq", "p_hat1000-2.clq", "p_hat500-3.clq", "p_hat1500-1.clq", "p_hat300-3.clq", "san1000.clq",
         "sanr200_0.9.clq" };
-    vector<int> iterations = {700000, 1, 1, 1000, 500000,
-         900000, 20000, 20000, 100000, 1000000, 1000000, 1000000,
+    vector<int> iterations = {700, 1, 1, 1000, 500000,
+         900000, 20000, 20000, 100, 1000, 100, 1000000,
          500000, 200000, 5000000, 2000000, 3000000, 3000000,
          100000, 4000000, 13000000, 4000000, 13000000, 2000000, 13000000,
          1000000
@@ -438,7 +335,8 @@ int main()
     ofstream fout("clique.csv");
     fout << "File; Clique; Time (sec)\n";
     
-    int count = 25;
+    int count = 10;
+    int randomization = 10000;
     string file = files[count];
     // for (string file : files)
     // {
@@ -450,7 +348,7 @@ int main()
         problem.ReadGraphFile(full_path);
         
         clock_t start = clock();
-        problem.FindClique(iterations[count]);
+        problem.FindClique(iterations[count], randomization);
         
         bool is_valid = problem.Check();
         
